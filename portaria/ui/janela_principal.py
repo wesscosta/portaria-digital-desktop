@@ -30,16 +30,11 @@ def somente_digitos(texto):
     return "".join(c for c in texto if c.isdigit())
 
 class JanelaPrincipal(QWidget):
-    def __init__(self):
+    def __init__(self, conn):
         super().__init__()
+        self.conn = conn
         self.setWindowTitle("Portaria Digital")
         self.resize(820, 520)
-
-        # Estado em memória: ainda some quando a aplicação fecha.
-        self.visitantes = {}                 # cpf -> nome
-        self.visitas = []                    # lista de dicionários
-        self.crachas_livres = list(CRACHAS)  # crachás na gaveta da recepção
-        self.proximo_id = 1
 
         # ---------- formulário de entrada ----------
         self.campo_cpf = QLineEdit()
@@ -47,17 +42,17 @@ class JanelaPrincipal(QWidget):
         self.campo_cpf.setMaxLength(14)
         self.campo_nome = QLineEdit()
         self.combo_setor = QComboBox()
-        self.combo_setor.addItem("Selecione um setor")
-        self.combo_setor.addItems(SETORES)
-        self.botao_entrada = QPushButton("&Registrar entrada")  # Alt+R
-        self.botao_limpar = QPushButton("&Limpar campos")      # Alt+L
+        
+        # A lista de setores virá do banco em carregar_setores().
+        self.botao_entrada = QPushButton("&Registrar entrada")
+        self.botao_limpar = QPushButton("&Limpar campos")
         self.mensagem = QLabel("Informe o CPF do visitante.")
 
         formulario = QFormLayout()
-        formulario.addRow("&CPF:", self.campo_cpf)    # Alt+C
-        formulario.addRow("&Nome:", self.campo_nome)  # Alt+N
-        formulario.addRow("S&etor:", self.combo_setor)  # Alt+E
-        
+        formulario.addRow("&CPF:", self.campo_cpf)
+        formulario.addRow("&Nome:", self.campo_nome)
+        formulario.addRow("S&etor:", self.combo_setor)
+
         botoes = QHBoxLayout()
         botoes.addWidget(self.botao_entrada)
         botoes.addWidget(self.botao_limpar)
@@ -72,8 +67,7 @@ class JanelaPrincipal(QWidget):
         self.tabela.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tabela.verticalHeader().setVisible(False)
-        self.botao_saida = QPushButton("Registrar &saída da visita selecionada")  # Alt+S
-
+        self.botao_saida = QPushButton("Registrar &saída da visita selecionada")
         self.contador = QLabel()
 
         layout = QVBoxLayout()
@@ -93,18 +87,34 @@ class JanelaPrincipal(QWidget):
         self.botao_limpar.clicked.connect(self.limpar_campos)
         self.botao_saida.clicked.connect(self.registrar_saida)
         self.campo_filtro.textChanged.connect(self.atualizar_tabela)
+
+        # Inicialização do estado visual a partir do banco.
+        self.carregar_setores()
         self.atualizar_tabela()
+
+    def carregar_setores(self):
+        self.combo_setor.clear()
+        self.combo_setor.addItem("Selecione um setor", None)
+        linhas = self.conn.execute(
+            "SELECT id, nome FROM setor WHERE ativo = 1 ORDER BY nome"
+        ).fetchall()
+        for linha in linhas:
+            self.combo_setor.addItem(linha["nome"], linha["id"])
 
     def buscar_visitante(self):
         cpf = normalizar_documento(self.campo_cpf.text())
-        if cpf in self.visitantes:
-            self.campo_nome.setText(self.visitantes[cpf])
+        linha = self.conn.execute(
+            "SELECT nome FROM visitante WHERE documento = ?", (cpf,)
+        ).fetchone()
+        if linha:
+            self.campo_nome.setText(linha["nome"])
             self.campo_nome.setReadOnly(True)
             self.mensagem.setText("Visitante já cadastrado. Escolha o setor.")
         else:
             if self.campo_nome.isReadOnly():
                 self.campo_nome.clear()
             self.campo_nome.setReadOnly(False)
+            
 
     def registrar_entrada(self):
         cpf = normalizar_documento(self.campo_cpf.text())
@@ -170,36 +180,37 @@ class JanelaPrincipal(QWidget):
         return [v for v in self.visitas if v["saida"] is None]
 
     def atualizar_tabela(self):
-        termo = self.campo_filtro.text().strip().lower()
-        linhas = []
-        for visita in self.presentes():
-            texto = (
-                f"{self.visitantes[visita['cpf']]} {visita['setor']}"
-            ).lower()
-            if termo in texto:
-                linhas.append(visita)
+        termo = f"%{self.campo_filtro.text().strip()}%"  # o curinga vai no parâmetro
+        linhas = self.conn.execute(
+            """
+            SELECT v.id, p.nome, p.documento, s.nome AS setor,
+                   c.codigo AS cracha, v.entrada
+              FROM visita v
+              JOIN visitante p ON p.id = v.visitante_id
+              JOIN setor s     ON s.id = v.setor_id
+              JOIN cracha c    ON c.id = v.cracha_id
+             WHERE v.saida IS NULL
+               AND (p.nome LIKE ? OR s.nome LIKE ?)
+             ORDER BY v.entrada
+            """,
+            (termo, termo),
+        ).fetchall()
 
         self.tabela.setRowCount(len(linhas))
-        for i, visita in enumerate(linhas):
-            valores = [
-                visita["id"],
-                self.visitantes[visita["cpf"]],
-                mascarar_documento(visita["cpf"]),
-                visita["setor"],
-                visita["cracha"],
-                visita["entrada"],
-            ]
+        for i, l in enumerate(linhas):
+            valores = [l["id"], l["nome"], mascarar_documento(l["documento"]),
+                       l["setor"], l["cracha"], l["entrada"]]
             for j, valor in enumerate(valores):
                 self.tabela.setItem(i, j, QTableWidgetItem(str(valor)))
-
-        # Fora dos dois laços: evita repetir a saída sobre uma linha antiga.
-        self.tabela.clearSelection()
         self.tabela.setCurrentCell(-1, -1)
 
-        self.contador.setText(
-            f"No prédio: {len(self.presentes())} | "
-            f"Crachás livres: {len(self.crachas_livres)}"
-        )
+        total = self.conn.execute(
+            "SELECT COUNT(*) FROM visita WHERE saida IS NULL"
+        ).fetchone()[0]
+        livres = self.conn.execute(
+            "SELECT COUNT(*) FROM cracha WHERE situacao = 'disponivel'"
+        ).fetchone()[0]
+        self.contador.setText(f"No prédio: {total} | Crachás livres: {livres}")
 
     def limpar_campos(self):
         self.campo_cpf.clear()
