@@ -49,15 +49,15 @@ class JanelaPrincipal(QWidget):
         self.combo_setor = QComboBox()
         self.combo_setor.addItem("Selecione um setor")
         self.combo_setor.addItems(SETORES)
-        self.botao_entrada = QPushButton("Registrar entrada")
-        self.botao_limpar = QPushButton("Limpar campos")
+        self.botao_entrada = QPushButton("&Registrar entrada")  # Alt+R
+        self.botao_limpar = QPushButton("&Limpar campos")      # Alt+L
         self.mensagem = QLabel("Informe o CPF do visitante.")
 
         formulario = QFormLayout()
-        formulario.addRow("CPF:", self.campo_cpf)
-        formulario.addRow("Nome:", self.campo_nome)
-        formulario.addRow("Setor:", self.combo_setor)
-
+        formulario.addRow("&CPF:", self.campo_cpf)    # Alt+C
+        formulario.addRow("&Nome:", self.campo_nome)  # Alt+N
+        formulario.addRow("S&etor:", self.combo_setor)  # Alt+E
+        
         botoes = QHBoxLayout()
         botoes.addWidget(self.botao_entrada)
         botoes.addWidget(self.botao_limpar)
@@ -72,7 +72,8 @@ class JanelaPrincipal(QWidget):
         self.tabela.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.tabela.verticalHeader().setVisible(False)
-        self.botao_saida = QPushButton("Registrar saída da visita selecionada")
+        self.botao_saida = QPushButton("Registrar &saída da visita selecionada")  # Alt+S
+
         self.contador = QLabel()
 
         layout = QVBoxLayout()
@@ -92,7 +93,6 @@ class JanelaPrincipal(QWidget):
         self.botao_limpar.clicked.connect(self.limpar_campos)
         self.botao_saida.clicked.connect(self.registrar_saida)
         self.campo_filtro.textChanged.connect(self.atualizar_tabela)
-
         self.atualizar_tabela()
 
     def buscar_visitante(self):
@@ -169,7 +169,7 @@ class JanelaPrincipal(QWidget):
     def presentes(self):
         return [v for v in self.visitas if v["saida"] is None]
 
-       def atualizar_tabela(self):
+    def atualizar_tabela(self):
         termo = self.campo_filtro.text().strip().lower()
         linhas = []
         for visita in self.presentes():
@@ -204,5 +204,6 @@ class JanelaPrincipal(QWidget):
     def limpar_campos(self):
         self.campo_cpf.clear()
         self.campo_nome.clear()
+        self.campo_nome.setReadOnly(False)
         self.combo_setor.setCurrentIndex(0)
         self.campo_cpf.setFocus()
